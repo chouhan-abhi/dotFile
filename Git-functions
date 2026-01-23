@@ -1,0 +1,912 @@
+#!/usr/bin/env zsh
+# ============================================================================
+# GIT FUNCTIONS
+# ============================================================================
+# This file contains all Git-related shell functions.
+# Requires: .functions.zsh (for color definitions and helper functions)
+# Source this file after .functions.zsh in your .zshrc or .alias.zsh
+
+# ============================================================================
+# GIT - Status Card (Enhanced visual status)
+# ============================================================================
+function stat() {
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    cat <<EOF
+Usage: stat [OPTIONS]
+
+Enhanced git status with card view (default) or compact 1-liner.
+
+Options:
+  -a, --all     Run stat on all linked repos via sis
+  -s, --short   Show compact 1-liner format
+  -h, --help    Show this help message
+
+Examples:
+  stat          # Full card view
+  stat -s       # Compact 1-liner
+  stat -a       # All repos via sis
+
+EOF
+    return 0
+  fi
+
+  local short_mode=false
+  
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -a|--all) sis stat; return $? ;;
+      -s|--short) short_mode=true; shift ;;
+      -h|--help) stat --help; return 0 ;;
+      -*) git status "$@"; return ;;
+      *) git status "$@"; return ;;
+    esac
+  done
+
+  # Check if we're in a git repo
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    _msg_error "Not a git repository"
+    return 1
+  fi
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # GATHER DATA
+  # ═══════════════════════════════════════════════════════════════════════════
+  local repo_name=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)")
+  local branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+  local commit_hash=$(git rev-parse --short HEAD 2>/dev/null)
+  local upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+  local ahead=0 behind=0
+
+  if [[ -n "$upstream" ]]; then
+    ahead=$(git rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
+    behind=$(git rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
+  fi
+
+  # File counts
+  local staged_files=$(git diff --cached --name-only 2>/dev/null)
+  local modified_files=$(git diff --name-only 2>/dev/null)
+  local untracked_files=$(git ls-files --others --exclude-standard 2>/dev/null)
+  local conflict_files=$(git diff --name-only --diff-filter=U 2>/dev/null)
+  
+  local staged=0 modified=0 untracked=0 conflicts=0
+  [[ -n "$staged_files" ]] && staged=$(echo "$staged_files" | wc -l | tr -d ' ')
+  [[ -n "$modified_files" ]] && modified=$(echo "$modified_files" | wc -l | tr -d ' ')
+  [[ -n "$untracked_files" ]] && untracked=$(echo "$untracked_files" | wc -l | tr -d ' ')
+  [[ -n "$conflict_files" ]] && conflicts=$(echo "$conflict_files" | wc -l | tr -d ' ')
+  
+  local stash=$(git stash list 2>/dev/null | wc -l | tr -d ' ')
+  local local_branches=$(git branch 2>/dev/null | wc -l | tr -d ' ')
+  local total_changes=$((staged + modified + untracked + conflicts))
+
+  # Last commit info
+  local commit_msg=$(git log -1 --pretty=format:"%s" 2>/dev/null)
+  local commit_author=$(git log -1 --pretty=format:"%an" 2>/dev/null)
+  local commit_time=$(git log -1 --pretty=format:"%ar" 2>/dev/null)
+  local commit_date=$(git log -1 --pretty=format:"%ad" --date=short 2>/dev/null)
+
+  # Sync status
+  local sync_status=""
+  local sync_icon=""
+  if [[ -n "$upstream" ]]; then
+    if (( ahead > 0 && behind > 0 )); then
+      sync_status="${_CLR_YELLOW}↑${ahead} ↓${behind}${_CLR_RESET}"
+      sync_icon="${_CLR_YELLOW}⚠${_CLR_RESET}"
+    elif (( ahead > 0 )); then
+      sync_status="${_CLR_CYAN}↑${ahead}${_CLR_RESET}"
+      sync_icon="${_CLR_CYAN}↑${_CLR_RESET}"
+    elif (( behind > 0 )); then
+      sync_status="${_CLR_RED}↓${behind}${_CLR_RESET}"
+      sync_icon="${_CLR_RED}↓${_CLR_RESET}"
+    else
+      sync_status="${_CLR_GREEN}✓ synced${_CLR_RESET}"
+      sync_icon="${_CLR_GREEN}✓${_CLR_RESET}"
+    fi
+  else
+    sync_status="${_CLR_DIM}no upstream${_CLR_RESET}"
+    sync_icon="${_CLR_DIM}○${_CLR_RESET}"
+  fi
+
+  # Changes status
+  local changes_status=""
+  local changes_icon=""
+  if (( total_changes == 0 )); then
+    changes_status="${_CLR_GREEN}✓ clean${_CLR_RESET}"
+    changes_icon="${_CLR_GREEN}✓${_CLR_RESET}"
+  else
+    local parts=()
+    (( staged > 0 )) && parts+=("${_CLR_GREEN}+${staged}${_CLR_RESET}")
+    (( modified > 0 )) && parts+=("${_CLR_YELLOW}~${modified}${_CLR_RESET}")
+    (( untracked > 0 )) && parts+=("${_CLR_RED}?${untracked}${_CLR_RESET}")
+    (( conflicts > 0 )) && parts+=("${_CLR_RED}!${conflicts}${_CLR_RESET}")
+    changes_status="${parts[*]}"
+    changes_icon="${_CLR_YELLOW}●${_CLR_RESET}"
+  fi
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # SHORT MODE (1-liner)
+  # ═══════════════════════════════════════════════════════════════════════════
+  if [[ "$short_mode" == true ]]; then
+    local short_msg="${commit_msg:0:25}"
+    [[ ${#commit_msg} -gt 25 ]] && short_msg="${short_msg}…"
+    
+    # Format: repo | branch@hash | sync | changes | stash | branches | "msg" time
+    local stash_str=""
+    (( stash > 0 )) && stash_str=" ≡${stash}"
+    
+    echo -e "${_CLR_BOLD}${repo_name}${_CLR_RESET} ${_CLR_DIM}│${_CLR_RESET} ${_CLR_BLUE}${branch}${_CLR_RESET}${_CLR_DIM}@${commit_hash}${_CLR_RESET} ${_CLR_DIM}│${_CLR_RESET} ${sync_icon} ${_CLR_DIM}│${_CLR_RESET} ${changes_icon} ${changes_status}${_CLR_CYAN}${stash_str}${_CLR_RESET} ${_CLR_DIM}│${_CLR_RESET} ${_CLR_DIM}\"${short_msg}\"${_CLR_RESET}"
+    return 0
+  fi
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # CARD MODE (default)
+  # ═══════════════════════════════════════════════════════════════════════════
+  local short_msg="${commit_msg:0:32}"
+  [[ ${#commit_msg} -gt 32 ]] && short_msg="${short_msg}…"
+  
+  # Truncate and pad values for consistent column width
+  local branch_display="${branch:0:20}"
+  local author_display="${commit_author:0:20}"
+  local date_display="${commit_date} (${commit_time:0:12})"
+  
+  # Pad left column values to 36 chars for alignment
+  local col_width=36
+  local branch_padded=$(printf "%-${col_width}s" "${branch_display}@${commit_hash}")
+  local msg_padded=$(printf "%-${col_width}s" "$short_msg")
+  local author_padded=$(printf "%-${col_width}s" "$author_display")
+  local date_padded=$(printf "%-${col_width}s" "$date_display")
+
+  echo ""
+  echo -e "${_CLR_CYAN}╭──────────────────────────────────────────────────────────────────────────────────────╮${_CLR_RESET}"
+  echo -e "${_CLR_CYAN}│${_CLR_RESET}  ${_CLR_BOLD}${repo_name}${_CLR_RESET}"
+  echo -e "${_CLR_CYAN}├──────────────────────────────────────────────────────────────────────────────────────┤${_CLR_RESET}"
+  echo -e "${_CLR_CYAN}│${_CLR_RESET}"
+  echo -e "${_CLR_CYAN}│${_CLR_RESET}  ${_CLR_DIM}Branch${_CLR_RESET}       ${_CLR_BLUE}${_CLR_BOLD}${branch_padded}${_CLR_RESET}  ${_CLR_DIM}│${_CLR_RESET}  ${_CLR_DIM}Sync${_CLR_RESET}       ${sync_status}"
+  echo -e "${_CLR_CYAN}│${_CLR_RESET}  ${_CLR_DIM}Commit${_CLR_RESET}       ${msg_padded}  ${_CLR_DIM}│${_CLR_RESET}  ${_CLR_DIM}Changes${_CLR_RESET}    ${changes_status}"
+  echo -e "${_CLR_CYAN}│${_CLR_RESET}  ${_CLR_DIM}Author${_CLR_RESET}       ${author_padded}  ${_CLR_DIM}│${_CLR_RESET}  ${_CLR_DIM}Stash${_CLR_RESET}      ${_CLR_CYAN}${stash}${_CLR_RESET}"
+  echo -e "${_CLR_CYAN}│${_CLR_RESET}  ${_CLR_DIM}Date${_CLR_RESET}         ${date_padded}  ${_CLR_DIM}│${_CLR_RESET}  ${_CLR_DIM}Branches${_CLR_RESET}   ${local_branches}"
+  echo -e "${_CLR_CYAN}│${_CLR_RESET}"
+
+  # Show file details if there are changes
+  if (( total_changes > 0 )); then
+    echo -e "${_CLR_CYAN}├──────────────────────────────────────────────────────────────────────────────────────┤${_CLR_RESET}"
+    echo -e "${_CLR_CYAN}│${_CLR_RESET}  ${_CLR_DIM}Files${_CLR_RESET}"
+    if (( staged > 0 )); then
+      echo -e "${_CLR_CYAN}│${_CLR_RESET}    ${_CLR_GREEN}Staged${_CLR_RESET}       ${staged} file(s) ready to commit"
+    fi
+    if (( modified > 0 )); then
+      echo -e "${_CLR_CYAN}│${_CLR_RESET}    ${_CLR_YELLOW}Modified${_CLR_RESET}     ${modified} file(s) changed"
+    fi
+    if (( untracked > 0 )); then
+      echo -e "${_CLR_CYAN}│${_CLR_RESET}    ${_CLR_RED}Untracked${_CLR_RESET}    ${untracked} file(s) new"
+    fi
+    if (( conflicts > 0 )); then
+      echo -e "${_CLR_CYAN}│${_CLR_RESET}    ${_CLR_RED}${_CLR_BOLD}Conflicts${_CLR_RESET}    ${conflicts} file(s) need resolution"
+    fi
+    echo -e "${_CLR_CYAN}│${_CLR_RESET}"
+  fi
+
+  # Action hints
+  local hints=()
+  (( conflicts > 0 )) && hints+=("resolve conflicts")
+  (( staged > 0 )) && hints+=("commit")
+  (( modified > 0 && staged == 0 )) && hints+=("git add")
+  (( ahead > 0 )) && hints+=("push")
+  (( behind > 0 )) && hints+=("pull")
+
+  if (( ${#hints[@]} > 0 )); then
+    echo -e "${_CLR_CYAN}│${_CLR_RESET}  ${_CLR_DIM}→ Next:${_CLR_RESET} ${hints[*]}"
+    echo -e "${_CLR_CYAN}│${_CLR_RESET}"
+  fi
+
+  echo -e "${_CLR_CYAN}╰──────────────────────────────────────────────────────────────────────────────────────╯${_CLR_RESET}"
+  echo ""
+}
+
+# ============================================================================
+# GIT - Pull/Push
+# ============================================================================
+function pull() {
+  local branch="$(git rev-parse --abbrev-ref HEAD)"
+  local target_branch="${1:-$branch}"
+  git pull origin "$target_branch" --rebase
+}
+
+function push_with_upstream() {
+  local branch_name=$(git rev-parse --abbrev-ref HEAD)
+  git push || git push --set-upstream origin "$branch_name"
+}
+
+# ============================================================================
+# GIT - Branch Management (unified)
+# ============================================================================
+function to_branch() {
+  local help_text="
+Usage: to [OPTIONS] <branch>
+
+Unified branch management: switch, sync, reset, or create branches.
+
+Options:
+  -n, --new       Create a NEW branch and push to origin
+  -s, --sync      Checkout and pull with rebase (sync with remote)
+  -r, --reset     Delete local branch and recreate from origin (hard reset)
+  -a, --all       Run 'sis to <branch>' to switch all linked repos
+  -p, --parallel  Run operation on all subdirectories in parallel
+  -h, --help      Show this help message
+
+Examples:
+  to master              # Just checkout master
+  to -s master           # Checkout master and pull --rebase
+  to -r master           # Delete local master, checkout fresh from origin
+  to -n feature/login    # Create new branch and push to origin
+  to -a master           # Switch all repos via sis
+  to -p master           # Checkout master in all subdirs (parallel)
+"
+
+  local branch=""
+  local do_new=false
+  local do_sync=false
+  local do_reset=false
+  local do_all=false
+  local do_parallel=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      -h|--help) echo "$help_text"; return 0 ;;
+      -n|--new) do_new=true; shift ;;
+      -s|--sync) do_sync=true; shift ;;
+      -r|--reset) do_reset=true; shift ;;
+      -a|--all) do_all=true; shift ;;
+      -p|--parallel) do_parallel=true; shift ;;
+      -*)
+        _msg_error "Unknown option: $1"
+        _msg_info "Use 'to --help' for usage information."
+        return 1
+        ;;
+      *)
+        if [[ -z "$branch" ]]; then
+          branch="$1"
+        else
+          _msg_error "Multiple branch names provided"
+          return 1
+        fi
+        shift
+        ;;
+    esac
+  done
+
+  if [[ -z "$branch" ]]; then
+    _msg_error "Branch name required"
+    _msg_info "Use 'to --help' for usage information."
+    return 1
+  fi
+
+  # Validate mutually exclusive flags
+  local flag_count=0
+  [[ "$do_new" == true ]] && ((flag_count++))
+  [[ "$do_sync" == true ]] && ((flag_count++))
+  [[ "$do_reset" == true ]] && ((flag_count++))
+  if (( flag_count > 1 )); then
+    _msg_error "-n, -s, and -r are mutually exclusive"
+    return 1
+  fi
+
+  # Handle --new flag
+  if [[ "$do_new" == true ]]; then
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      _msg_error "Branch '$branch' already exists locally"
+      return 1
+    fi
+    git fetch origin > /dev/null 2>&1
+    if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+      _msg_error "Branch '$branch' already exists on remote"
+      return 1
+    fi
+    if git checkout -b "$branch" && git push --set-upstream origin "$branch"; then
+      _msg_success "Branch '$branch' created and pushed"
+    else
+      _msg_error "Failed to create/push branch '$branch'"
+      return 1
+    fi
+    return 0
+  fi
+
+  # Handle --all flag
+  if [[ "$do_all" == true ]]; then
+    _msg_progress "Switching all repos to '$branch' via sis..."
+    sis to "$branch"
+    return $?
+  fi
+
+  # Handle --parallel flag
+  if [[ "$do_parallel" == true ]]; then
+    setopt LOCAL_OPTIONS NO_NOTIFY NO_MONITOR 2>/dev/null
+    local base_dir=$(pwd)
+    local -a repos=()
+    local d
+    
+    for d in "$base_dir"/*/; do
+      [[ -d "$d/.git" ]] && repos+=("$d")
+    done
+    
+    if (( ${#repos[@]} == 0 )); then
+      _msg_error "No git repositories found in subdirectories"
+      return 1
+    fi
+    
+    local mode="checkout"
+    [[ "$do_sync" == true ]] && mode="sync"
+    [[ "$do_reset" == true ]] && mode="reset"
+    
+    echo -e "${_CLR_BOLD}🚀 Running '$mode' to '$branch' on ${#repos[@]} repos in parallel...${_CLR_RESET}"
+    echo ""
+    
+    local tmpdir=$(mktemp -d)
+    local idx=0
+    
+    for d in "${repos[@]}"; do
+      (
+        local name=$(basename "$d")
+        local result="" status=0
+        cd "$d" 2>/dev/null || { echo "${name}|failed|Cannot cd"; exit 1; }
+        
+        if [[ "$do_reset" == true ]]; then
+          if git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
+            local current=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+            [[ "$current" == "$branch" ]] && git checkout --detach HEAD 2>/dev/null
+            git branch -D "$branch" 2>/dev/null
+          fi
+          git fetch origin 2>/dev/null
+          if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+            git checkout -b "$branch" "origin/$branch" 2>/dev/null && result="reset" || { result="failed"; status=1; }
+          else
+            result="no-branch"; status=1
+          fi
+        elif [[ "$do_sync" == true ]]; then
+          git checkout "$branch" 2>/dev/null && git pull --rebase 2>/dev/null && result="synced" || { result="failed"; status=1; }
+        else
+          git checkout "$branch" 2>/dev/null && result="checked out" || { result="failed"; status=1; }
+        fi
+        echo "${name}|${result}|${status}" > "$tmpdir/$idx.out"
+      ) &
+      ((idx++))
+    done
+    
+    wait 2>/dev/null
+    
+    local success=0 failed=0
+    for ((i=0; i<idx; i++)); do
+      if [[ -f "$tmpdir/$i.out" ]]; then
+        local line=$(cat "$tmpdir/$i.out")
+        local name="${line%%|*}"
+        local rest="${line#*|}"
+        local result="${rest%%|*}"
+        local status="${rest##*|}"
+        if [[ "$status" == "0" ]]; then
+          echo "  ${_CLR_GREEN}✓${_CLR_RESET} ${name}: ${result}"
+          ((success++))
+        else
+          echo "  ${_CLR_RED}✗${_CLR_RESET} ${name}: ${result}"
+          ((failed++))
+        fi
+      fi
+    done
+    rm -rf "$tmpdir" 2>/dev/null
+    echo ""
+    echo -e "${_CLR_BOLD}📊 Summary:${_CLR_RESET} ${_CLR_GREEN}✅ ${success} succeeded${_CLR_RESET}, ${_CLR_RED}❌ ${failed} failed${_CLR_RESET}"
+    return 0
+  fi
+
+  # Handle --reset flag
+  if [[ "$do_reset" == true ]]; then
+    _msg_progress "Resetting '$branch' from origin..."
+    if git show-ref --verify --quiet "refs/heads/$branch"; then
+      local current=$(git rev-parse --abbrev-ref HEAD)
+      if [[ "$current" == "$branch" ]]; then
+        git checkout --detach HEAD 2>/dev/null || { _msg_error "Cannot detach HEAD"; return 1; }
+      fi
+      git branch -D "$branch" || { _msg_error "Failed to delete local branch '$branch'"; return 1; }
+    fi
+    git fetch origin 2>/dev/null
+    if git ls-remote --exit-code --heads origin "$branch" > /dev/null 2>&1; then
+      git checkout -b "$branch" "origin/$branch" && _msg_success "Branch '$branch' reset to match origin"
+    else
+      _msg_error "Branch '$branch' does not exist on origin"
+      return 1
+    fi
+    return 0
+  fi
+
+  # Handle --sync flag
+  if [[ "$do_sync" == true ]]; then
+    _msg_progress "Syncing '$branch' with origin..."
+    git checkout "$branch" && git pull --rebase && _msg_success "Branch '$branch' synced with origin"
+    return $?
+  fi
+
+  # Default: just checkout
+  git checkout "$branch"
+}
+
+# ============================================================================
+# GIT - Cleanup stale branches
+# ============================================================================
+function git_cleanup() {
+  if ! command -v git &>/dev/null; then
+    _msg_error "Git is not installed or not in PATH"
+    return 1
+  fi
+  if ! git rev-parse --is-inside-work-tree &>/dev/null; then
+    _msg_error "Not inside a Git repository"
+    return 1
+  fi
+
+  local delete_gone=false dry_run=false prune_only=false auto_yes=false remote="origin"
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --delete-gone) delete_gone=true; shift ;;
+      --dry-run) dry_run=true; shift ;;
+      --prune-only) prune_only=true; shift ;;
+      --remote) remote="$2"; shift 2 ;;
+      -y|--yes) auto_yes=true; shift ;;
+      -h|--help)
+        cat <<EOF
+Usage: kdb [options]
+
+Performs a safe local cleanup (does NOT modify remote):
+  • Fetches all remotes with prune
+  • Prunes stale remote-tracking branches
+  • Shows local branch tracking status
+  • Optionally deletes local branches whose upstream is [gone]
+
+Options:
+  --delete-gone   Delete local branches marked as [gone]
+  --dry-run       Preview deletion list (no changes)
+  --prune-only    Only fetch+prune and show status
+  --remote <name> Remote to prune (default: origin)
+  -y, --yes       Skip confirmation prompt
+EOF
+        return 0
+        ;;
+      *) _msg_error "Unknown option: $1"; return 1 ;;
+    esac
+  done
+
+  if ! git remote | grep -qx "$remote"; then
+    remote=$(git remote | head -n 1)
+    [[ -z "$remote" ]] && { _msg_error "No remotes found"; return 1; }
+    _msg_info "Using remote: $remote"
+  fi
+
+  echo -e "${_CLR_BLUE}🔒 Safety:${_CLR_RESET} This does NOT modify the remote. Only local cleanup.\n"
+  echo -e "${_CLR_BLUE}🔄 Fetching all remotes with prune...${_CLR_RESET}"
+  git fetch --all --prune
+  echo -e "${_CLR_BLUE}🧹 Pruning stale refs for '$remote'...${_CLR_RESET}"
+  git remote prune "$remote"
+  echo -e "\n${_CLR_BLUE}📋 Local branches (tracking info):${_CLR_RESET}"
+  git branch -vv
+  echo
+
+  [[ "$prune_only" == true ]] && { _msg_success "Prune-only mode complete"; return 0; }
+
+  local gone_branches=$(git branch -vv | awk '/\[.*: *gone\]/ || /\[gone\]/ {print $1}')
+  if [[ -z "$gone_branches" ]]; then
+    _msg_success "No local branches with [gone] upstream found"
+    return 0
+  fi
+
+  _msg_warn "Stale local branches (upstream gone):"
+  echo "$gone_branches" | sed 's/^/   - /'
+  echo
+
+  [[ "$delete_gone" == false ]] && { _msg_info "To delete these, run: kdb --delete-gone"; return 0; }
+  
+  if [[ "$dry_run" == true ]]; then
+    echo -e "${_CLR_BLUE}🔎 Dry-run:${_CLR_RESET} Would delete:"
+    echo "$gone_branches" | sed 's/^/   - /'
+    return 0
+  fi
+
+  if [[ "$auto_yes" == false ]]; then
+    echo -n "❓ Confirm deletion of above branches? [y/N]: "
+    read -r reply
+    [[ "$reply" =~ ^[Yy]$ ]] || { echo "🛑 Aborted."; return 0; }
+  fi
+
+  echo -e "${_CLR_BLUE}🗑️  Deleting local branches...${_CLR_RESET}"
+  local deleted_count=0 skipped_count=0
+  while IFS= read -r br; do
+    [[ -z "$br" ]] && continue
+    if git branch -d "$br"; then ((deleted_count++)); else ((skipped_count++)); fi
+  done <<< "$gone_branches"
+
+  echo -e "\n${_CLR_CYAN}📊 Cleanup Summary:${_CLR_RESET}"
+  echo -e "   ${_CLR_GREEN}✅ Deleted:${_CLR_RESET} $deleted_count"
+  echo -e "   ${_CLR_YELLOW}⚠️  Skipped (unmerged):${_CLR_RESET} $skipped_count"
+}
+
+# ============================================================================
+# GIT - Merge Branch Preparation (cherry-pick workflow)
+# ============================================================================
+function prepare_merge_branch() {
+  if [[ -z "$1" ]]; then
+    cat <<EOF
+Usage: cc <target-branch>
+
+Create a merge branch with your unpushed commits cherry-picked onto a target branch.
+Opens a PR automatically after pushing.
+
+Examples:
+  cc dev      # Cherry-pick your commits onto origin/dev
+  cc master   # Cherry-pick your commits onto origin/master
+EOF
+    return 1
+  fi
+
+  local origin_branch="$1"
+  local current_branch=$(git symbolic-ref --short HEAD)
+  local user_email=$(git config user.email)
+  local current_branch_clean=$(basename "$current_branch")
+  local merge_branch="merge/${current_branch_clean}-${origin_branch}"
+
+  # Check for upstream and unpushed commits
+  local upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+  if [[ -z "$upstream" ]]; then
+    _msg_error "No upstream set for current branch '$current_branch'"
+    return 1
+  fi
+
+  # Get commits in chronological order directly (no need for tail -r)
+  local -a commits_array
+  commits_array=("${(@f)$(git log "$upstream"..HEAD --reverse --pretty=format:"%H" --author="$user_email")}")
+
+  # Filter empty entries
+  commits_array=(${commits_array[@]:#})
+
+  if [[ ${#commits_array[@]} -eq 0 ]]; then
+    _msg_info "No unpushed commits found"
+    return 0
+  fi
+
+  # Fetch and validate origin branch (single fetch)
+  git fetch origin >/dev/null 2>&1
+  if ! git show-ref --verify --quiet "refs/remotes/origin/${origin_branch}"; then
+    _msg_error "Branch 'origin/${origin_branch}' does not exist"
+    return 1
+  fi
+
+  echo -e "${_CLR_BOLD}🔀 Creating merge branch: ${merge_branch}${_CLR_RESET}"
+
+  # Create or update merge branch
+  if git show-ref --verify --quiet "refs/heads/${merge_branch}"; then
+    git checkout "${merge_branch}" >/dev/null 2>&1 || { _msg_error "Failed to checkout ${merge_branch}"; return 1; }
+    git pull origin "${merge_branch}" --ff-only >/dev/null 2>&1
+  else
+    git checkout -b "${merge_branch}" "origin/${origin_branch}" >/dev/null 2>&1 || { _msg_error "Failed to create ${merge_branch}"; return 1; }
+  fi
+
+  _msg_progress "Cherry-picking ${#commits_array[@]} commit(s)..."
+
+  # Pre-fetch all existing cherry-pick references once (O(1) lookup vs O(n) per commit)
+  local existing_cherries=$(git log "${merge_branch}" --pretty=format:"%b" 2>/dev/null)
+
+  # Cherry-pick each commit
+  for commit in "${commits_array[@]}"; do
+    # Fast string match instead of git log grep per iteration
+    if [[ "$existing_cherries" != *"cherry picked from commit $commit"* ]]; then
+      if ! git cherry-pick -x "$commit" >/dev/null 2>&1; then
+        _msg_error "Cherry-pick failed for commit $commit"
+        _msg_info "Resolve conflicts manually, then run: git cherry-pick --continue"
+        return 1
+      fi
+    fi
+  done
+
+  # Push the merge branch with upstream
+  if ! git push --set-upstream origin "${merge_branch}" 2>&1; then
+    _msg_warn "Push failed, attempting to merge origin/${origin_branch}..."
+    # Skip redundant fetch - we already fetched earlier
+    if git merge "origin/${origin_branch}"; then
+      if ! git push --set-upstream origin "${merge_branch}" 2>&1; then
+        _msg_error "Push still failed after merging"
+        git checkout "${current_branch}" >/dev/null 2>&1
+        return 1
+      fi
+    else
+      _msg_error "Failed to merge. Resolve conflicts manually."
+      git checkout "${current_branch}" >/dev/null 2>&1
+      return 1
+    fi
+  fi
+
+  # Create PR and switch back to original branch
+  gprm "${origin_branch}" >/dev/null 2>&1
+  git checkout "${current_branch}" >/dev/null 2>&1
+
+  _msg_success "Merge branch '${merge_branch}' created and PR opened"
+}
+
+# ============================================================================
+# GIT - Master Sync (msync)
+# ============================================================================
+# Syncs current branch with master by creating a merge branch
+# Usage: msync [source_branch]
+# Default source_branch is 'master'
+function msync() {
+  local source_branch="${1:-master}"
+  local current_branch=$(git symbolic-ref --short HEAD 2>/dev/null)
+
+  if [[ -z "$current_branch" ]]; then
+    _msg_error "Not on a git branch (detached HEAD or not a repo)"
+    return 1
+  fi
+
+  # Prevent running on the source branch itself
+  if [[ "$current_branch" == "$source_branch" ]]; then
+    _msg_error "Already on '${source_branch}'. Switch to a feature branch first."
+    return 1
+  fi
+
+  local current_branch_clean=$(basename "$current_branch")
+  local current_date=$(date +%Y%m%d)
+  local sync_branch="merge/SK-0001-${current_branch_clean}-${source_branch}-sync-${current_date}"
+
+  echo -e "${_CLR_BOLD}🔄 Syncing '${current_branch}' with '${source_branch}'${_CLR_RESET}"
+
+  # Fetch latest from origin
+  _msg_progress "Fetching latest from origin..."
+  git fetch origin >/dev/null 2>&1
+
+  # Validate source branch exists
+  if ! git show-ref --verify --quiet "refs/remotes/origin/${source_branch}"; then
+    _msg_error "Branch 'origin/${source_branch}' does not exist"
+    return 1
+  fi
+
+  # Check if there are commits in source that aren't in current branch
+  local behind_count=$(git rev-list --count "HEAD..origin/${source_branch}" 2>/dev/null)
+
+  if [[ "$behind_count" -eq 0 ]]; then
+    _msg_success "Branch '${current_branch}' is already up to date with '${source_branch}'"
+    return 0
+  fi
+
+  _msg_info "Found ${behind_count} commit(s) in '${source_branch}' not in '${current_branch}'"
+
+  # Store current branch to return later
+  local original_branch="$current_branch"
+
+  # Create or reset sync branch from current branch
+  echo -e "${_CLR_BOLD}🔀 Creating sync branch: ${sync_branch}${_CLR_RESET}"
+
+  if git show-ref --verify --quiet "refs/heads/${sync_branch}"; then
+    # Sync branch exists - checkout and reset to current branch state
+    git checkout "${sync_branch}" >/dev/null 2>&1 || { _msg_error "Failed to checkout ${sync_branch}"; return 1; }
+    git reset --hard "${original_branch}" >/dev/null 2>&1
+  else
+    # Create new sync branch from current branch
+    git checkout -b "${sync_branch}" >/dev/null 2>&1 || { _msg_error "Failed to create ${sync_branch}"; return 1; }
+  fi
+
+  # Merge source branch into sync branch
+  _msg_progress "Merging 'origin/${source_branch}' into '${sync_branch}'..."
+
+  if ! git merge "origin/${source_branch}" --no-edit 2>&1; then
+    echo ""
+    _msg_error "Merge conflicts detected!"
+    _msg_info "Resolve conflicts manually, then:"
+    echo -e "  ${_CLR_CYAN}1.${_CLR_RESET} Stage resolved files: ${_CLR_GREEN}git add <files>${_CLR_RESET}"
+    echo -e "  ${_CLR_CYAN}2.${_CLR_RESET} Complete merge:       ${_CLR_GREEN}git commit${_CLR_RESET}"
+    echo -e "  ${_CLR_CYAN}3.${_CLR_RESET} Push and create PR:   ${_CLR_GREEN}git push -u origin ${sync_branch} && gprm ${original_branch}${_CLR_RESET}"
+    echo -e "  ${_CLR_CYAN}4.${_CLR_RESET} Return to branch:     ${_CLR_GREEN}git checkout ${original_branch}${_CLR_RESET}"
+    echo ""
+    _msg_warn "Or abort with: git merge --abort && git checkout ${original_branch}"
+    return 1
+  fi
+
+  _msg_success "Merge completed without conflicts"
+
+  # Push sync branch
+  _msg_progress "Pushing '${sync_branch}' to origin..."
+  if ! git push --set-upstream origin "${sync_branch}" --force-with-lease 2>&1; then
+    _msg_error "Failed to push '${sync_branch}'"
+    git checkout "${original_branch}" >/dev/null 2>&1
+    return 1
+  fi
+
+  # Create PR targeting the original branch
+  _msg_progress "Creating PR to merge '${sync_branch}' into '${original_branch}'..."
+  gprm "${original_branch}" >/dev/null 2>&1
+
+  # Switch back to original branch
+  git checkout "${original_branch}" >/dev/null 2>&1
+
+  _msg_success "Sync branch '${sync_branch}' created and PR opened"
+  _msg_info "After PR is merged, your '${original_branch}' will have '${source_branch}' changes"
+}
+
+# ============================================================================
+# GIT - Multi-repo Status Report
+# ============================================================================
+function git_status_report() {
+  setopt LOCAL_OPTIONS NO_NOTIFY NO_MONITOR 2>/dev/null
+
+  local help_text="
+Usage: report [OPTIONS]
+
+Scan directories for git repositories and report their status.
+
+Options:
+  --fetch      Run 'git fetch' before checking status
+  --quiet      Only show repos with changes or diverged
+  --help       Show this help message
+"
+
+  local fetch=false quiet=false
+
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --help|-h) echo "$help_text"; return 0 ;;
+      --fetch) fetch=true; shift ;;
+      --quiet) quiet=true; shift ;;
+      *) shift ;;
+    esac
+  done
+
+  local base_dir=$(pwd)
+  local -a repos=()
+  local d
+
+  for d in "$base_dir"/*/; do
+    [[ -d "$d/.git" ]] && repos+=("$d")
+  done
+
+  if (( ${#repos[@]} == 0 )); then
+    _msg_info "No git repositories found"
+    return 0
+  fi
+
+  [[ "$fetch" == true ]] && {
+    _msg_progress "Fetching from remotes..."
+    for d in "${repos[@]}"; do git -C "$d" fetch -q 2>/dev/null & done
+    wait 2>/dev/null
+  }
+
+  echo ""
+  printf "${_CLR_BOLD}📋 %-24s %-20s %s${_CLR_RESET}\n" "REPO" "BRANCH" "STATUS"
+  printf "%s\n" "$(printf '─%.0s' {1..60})"
+
+  for d in "${repos[@]}"; do
+    local name=$(basename "$d")
+    local branch=$(git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+    local status_output=$(git -C "$d" status --porcelain 2>/dev/null)
+    local ahead=$(git -C "$d" rev-list --count @{u}..HEAD 2>/dev/null || echo 0)
+    local behind=$(git -C "$d" rev-list --count HEAD..@{u} 2>/dev/null || echo 0)
+
+    local status_str="${_CLR_GREEN}✅ clean${_CLR_RESET}"
+    if [[ -n "$status_output" ]]; then
+      status_str="${_CLR_YELLOW}⚠️  changes${_CLR_RESET}"
+    elif (( ahead > 0 || behind > 0 )); then
+      status_str="${_CLR_CYAN}⇅ ↑$ahead ↓$behind${_CLR_RESET}"
+    fi
+
+    if [[ "$quiet" == true && -z "$status_output" && "$ahead" == "0" && "$behind" == "0" ]]; then
+      continue
+    fi
+
+    printf "%-25s %-20s %s\n" "$name" "$branch" "$status_str"
+  done
+
+  echo ""
+}
+
+# ============================================================================
+# GITHUB - Unified PR command (CLI or Browser)
+# ============================================================================
+function pr() {
+  local branch=$(git symbolic-ref --short HEAD)
+  local target="dev"
+  local title="" description="" ticket=""
+  local manual_mode=false
+
+  # Show help if no args or help flag
+  if [[ "$1" == "-h" || "$1" == "--help" ]]; then
+    cat <<EOF
+Usage: pr [options] [target_branch]
+
+Create a GitHub PR using gh CLI, or open in browser with -m flag.
+Title defaults to last commit message if not provided.
+
+Options:
+  -m, --manual           Open PR in browser instead of using gh CLI
+  -j, --jira TICKET      Jira ticket ID (ignored in manual mode)
+  -d, --description DESC Description for the PR (optional)
+  -t, --title TITLE      Title for the PR (defaults to last commit)
+  -h, --help             Show this help message
+
+Examples:
+  pr                                      # Create PR with last commit as title
+  pr dev                                  # Create PR to dev branch
+  pr dev -j PROJ-123                      # Create PR with Jira ticket
+  pr dev -j PROJ-123 -d "Fix login bug"   # Create PR with Jira and description
+  pr master -t "Release v1.0"             # Create PR with custom title
+  pr -m dev                               # Open PR in browser to dev
+  pr -m                                   # Open PR in browser to dev (default)
+EOF
+    return 0
+  fi
+
+  # Parse arguments
+  while (( $# )); do
+    case $1 in
+      -m|--manual) manual_mode=true ;;
+      -j|--jira) shift; ticket="$1" ;;
+      -d|--description) shift; description="$1" ;;
+      -t|--title) shift; title="$1" ;;
+      -h|--help) pr --help; return 0 ;;
+      -*) _msg_error "Unknown option: $1"; return 1 ;;
+      *) target="$1" ;;
+    esac
+    shift
+  done
+
+  # Manual mode: open PR in browser
+  if $manual_mode; then
+    # Push branch to remote before opening PR
+    _msg_progress "Pushing '$branch' to origin..."
+    if ! git push --set-upstream origin "$branch" 2>&1; then
+      _msg_error "Failed to push branch '$branch' to origin"
+      return 1
+    fi
+
+    local remote=$(git config --get remote.origin.url)
+    local url=$(echo "$remote" | sed -e 's/\.git$//' -e 's/:/\//' -e 's/git@/https:\/\//')
+    local pr_url="${url}/compare/${target}...${branch}?expand=1"
+    echo -e "${_CLR_BLUE}🔗 Opening PR:${_CLR_RESET} $branch → $target"
+    open "$pr_url"
+    return 0
+  fi
+
+  # CLI mode: create PR with gh
+  # Default title to last commit message if not provided
+  if [[ -z "$title" && -z "$ticket" ]]; then
+    title=$(git log -1 --pretty=%s)
+  fi
+
+  local body="$description"
+  if [[ -n "$ticket" ]]; then
+    # Prepend ticket to title (use last commit if no explicit title)
+    [[ -z "$title" ]] && title=$(git log -1 --pretty=%s)
+    title="${ticket} ${title}"
+    body="### Description\nJira: ${ticket}"
+    [[ -n "$description" ]] && body="${body}\n\n${description}"
+  fi
+
+  # Push branch to remote before creating PR
+  _msg_progress "Pushing '$branch' to origin..."
+  if ! git push --set-upstream origin "$branch" 2>&1; then
+    _msg_error "Failed to push branch '$branch' to origin"
+    return 1
+  fi
+
+  echo -e "${_CLR_BLUE}📝 Creating PR:${_CLR_RESET} $branch → $target"
+  echo -e "${_CLR_BLUE}   Title:${_CLR_RESET} $title"
+
+  if gh pr create --base "$target" --head "$branch" --title "$title" --body "$body"; then
+    _msg_success "PR created successfully"
+    gh pr view --web
+  else
+    _msg_error "Failed to create PR"
+    return 1
+  fi
+}
+
+# ============================================================================
+# GIT ALIASES
+# ============================================================================
+alias gpr='pr'
+alias gprm='pr -m'
+alias to='to_branch'
+alias kdb='git_cleanup'
+alias cc='prepare_merge_branch'
+alias report='git_status_report'
