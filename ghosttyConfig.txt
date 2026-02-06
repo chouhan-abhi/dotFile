@@ -42,13 +42,13 @@
 # # Just for example:
 # resize-overlay-duration = 4s 200ms
 
-theme=GruvboxDarkHard
+# theme=GruvboxDarkHard
 
 window-height=30
 
 window-width=110
 
-title="Mac OS X Terminal"
+title="Terminal"
 
 window-title-font-family="MonoLisa Variable"
 
@@ -58,21 +58,14 @@ font-size=12
 
 font-feature=-liga
 
-font-thicken=true
-
 font-feature = -calt
 
 font-feature = -dlig
 
 adjust-cell-height = 9%
 
-mouse-scroll-multiplier = 0.5
-
-macos-titlebar-style = tabs
-
 background-opacity = 0.90
-
-background-blur-radius = 20
+background-opacity-cells = true
 
 selection-invert-fg-bg = true
 
@@ -95,3 +88,40 @@ window-padding-x = 15
 window-padding-y = 10
 
 copy-on-select = clipboard
+
+mouse-scroll-multiplier = 1.5
+
+window-padding-balance = true
+
+config-file = ?linux-kde.conf
+
+# Power-user keybinds (leader sequences)
+keybind = ctrl+space>s>h=new_split:left
+keybind = ctrl+space>s>j=new_split:down
+keybind = ctrl+space>s>k=new_split:up
+keybind = ctrl+space>s>l=new_split:right
+keybind = ctrl+space>f>h=goto_split:left
+keybind = ctrl+space>f>j=goto_split:down
+keybind = ctrl+space>f>k=goto_split:up
+keybind = ctrl+space>f>l=goto_split:right
+keybind = ctrl+space>z=toggle_split_zoom
+keybind = ctrl+space>==equalize_splits
+
+keybind = ctrl+space>t>n=new_tab
+keybind = ctrl+space>t>h=previous_tab
+keybind = ctrl+space>t>l=next_tab
+keybind = ctrl+space>t>m=move_tab:1
+keybind = ctrl+space>t>shift+m=move_tab:-1
+
+keybind = ctrl+space>r=reload_config
+keybind = ctrl+space>o=open_config
+keybind = ctrl+space>p=toggle_command_palette
+
+keybind = ctrl+space>u=scroll_page_lines:-10
+keybind = ctrl+space>d=scroll_page_lines:10
+keybind = ctrl+space>g=scroll_to_bottom
+keybind = ctrl+space>shift+g=scroll_to_top
+keybind = ctrl+space>y=copy_to_clipboard
+
+keybind = ctrl+space>k=jump_to_prompt:-1
+keybind = ctrl+space>j=jump_to_prompt:1
