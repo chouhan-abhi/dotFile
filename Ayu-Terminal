@@ -1,0 +1,59 @@
+# Theme: Ayu (Enhanced with transparency)
+
+# FONTS
+font-family = "JetBrains Mono"
+font-size = 15
+font-thicken = true
+
+# WINDOW
+window-padding-x = 16
+window-padding-y = 12
+window-decoration = true
+window-save-state = always
+
+# BACKGROUND TRANSPARENCY
+background-opacity = 0.75
+background-blur-radius = 20
+
+# CURSOR
+cursor-style = bar
+cursor-style-blink = true
+
+# MOUSE
+mouse-hide-while-typing = true
+
+# SHELL INTEGRATION
+shell-integration = zsh
+shell-integration-features = cursor,sudo,title
+
+# SCROLLBACK
+scrollback-limit = 10000
+
+# COLORS - AYU THEME
+background = #0b0e14
+foreground = #bfbdb6
+cursor-color = #e6b450
+cursor-text = #0b0e14
+selection-background = #409fff
+selection-foreground = #0b0e14
+
+# Color Palette
+palette = 0=#11151c
+palette = 1=#ea6c73
+palette = 2=#7fd962
+palette = 3=#f9af4f
+palette = 4=#53bdfa
+palette = 5=#cda1fa
+palette = 6=#90e1c6
+palette = 7=#c7c7c7
+palette = 8=#686868
+palette = 9=#f07178
+palette = 10=#aad94c
+palette = 11=#ffb454
+palette = 12=#59c2ff
+palette = 13=#d2a6ff
+palette = 14=#95e6cb
+palette = 15=#ffffff
+
+# Bold colors
+bold-is-bright = true
